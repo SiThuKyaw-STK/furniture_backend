@@ -2,9 +2,11 @@ import { Request, Response, NextFunction } from "express";
 import { body, validationResult } from "express-validator";
 import {
   createOtp,
+  createUser,
   getOtpByPhone,
   getUserByPhone,
   updateOtp,
+  updateUser,
 } from "../services/authService";
 import {
   checkOtpErrorIfSameDate,
@@ -14,6 +16,7 @@ import {
 import { generateOTP, generateToken } from "../utils/generate";
 import bcrypt from "bcrypt";
 import moment from "moment";
+import jwt from "jsonwebtoken";
 
 export const login = [
   body("phone", "Invalid phone number")
@@ -245,6 +248,7 @@ export const confirmPassword = [
       throw error;
     }
 
+    // Token is wrong
     if (otpRow?.verifyToken !== token) {
       const otpData = {
         error: 5,
@@ -256,14 +260,98 @@ export const confirmPassword = [
       throw error;
     }
 
-    res.status(200).json({ message: "confirm password" });
+    // OTP expired
+    const isExpired = moment().diff(otpRow!.updatedAt, "minutes") > 10;
+
+    if (isExpired) {
+      const error: any = new Error(
+        "Your request is expired. Please try again.",
+      );
+      error.status = 403;
+      error.code = "Error_Expired";
+      throw error;
+    }
+
+    const hashPassword = await bcrypt.hash(password, 10);
+    const randToken = "I will replace Refresh token soon.";
+
+    const userData = {
+      phone,
+      password: hashPassword,
+      randToken,
+    };
+    const newUser = await createUser(userData);
+
+    const accessTokenPayload = { id: newUser.id };
+    const accessToken = jwt.sign(
+      accessTokenPayload,
+      process.env.ACCESS_TOKEN_SECRET!,
+      {
+        expiresIn: 60 * 15,
+      },
+    );
+
+    const refreshTokenPayload = { id: newUser.id, phone: newUser.phone };
+    const refreshToken = jwt.sign(
+      refreshTokenPayload,
+      process.env.REFRESH_TOKEN_SECRET!,
+      {
+        expiresIn: "30d",
+      },
+    );
+
+    const userUpdateData = {
+      randToken: refreshToken,
+    };
+    await updateUser(userUpdateData, newUser.id);
+
+    res
+      .cookie("accessToken", accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "none",
+        maxAge: 15 * 60 * 1000 // 15 minutes
+      })
+      .cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "none",
+        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+      })
+      .status(201)
+      .json({
+        message: "Successfully created an account.",
+        userId: newUser.id
+      });
   },
 ];
 
-export const forgetPassword = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  res.status(200).json({ message: "forget password" });
-};
+export const forgetPassword = [
+  body("phone", "Invalid phone number")
+    .trim()
+    .notEmpty()
+    .matches("^[0-9]+$")
+    .isLength({ min: 5, max: 12 }),
+  body("password", "Password must be 8 digits")
+    .trim()
+    .notEmpty()
+    .matches("^[0-9]+$")
+    .isLength({ min: 8, max: 8 }), , async (
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) => {
+    const errors = validationResult(req).array({ onlyFirstError: true });
+    if (errors.length > 0) {
+      const error: any = new Error(errors[0].msg);
+      error.status = 400;
+      error.code = "Error_Invalid";
+      throw error;
+    }
+
+    const { phone, password } = req.body;
+
+    const user = await getUserByPhone(phone);
+    checkUserExist(user);
+    res.status(200).json({ message: "forget password" });
+  }];

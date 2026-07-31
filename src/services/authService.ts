@@ -28,3 +28,16 @@ export const updateOtp = async (otpData: any, id: number) => {
         data: otpData
     })
 };
+
+export const createUser = async (userData: any) => {
+    return prisma.user.create({
+        data: userData
+    })
+};
+
+export const updateUser = async (userData: any, id: number) => {
+    return prisma.user.update({
+        where: { id },
+        data: userData
+    })
+};
