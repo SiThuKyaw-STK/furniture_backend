@@ -4,6 +4,7 @@ import {
   createOtp,
   createUser,
   getOtpByPhone,
+  getUserById,
   getUserByPhone,
   updateOtp,
   updateUser,
@@ -12,6 +13,7 @@ import {
   checkOtpErrorIfSameDate,
   checkOtpRow,
   checkUserExist,
+  checkUserIfNotExist,
 } from "../utils/auth";
 import { generateOTP, generateToken } from "../utils/generate";
 import bcrypt from "bcrypt";
@@ -24,14 +26,115 @@ export const login = [
     .notEmpty()
     .matches("^[0-9]+$")
     .isLength({ min: 5, max: 12 }),
+  body("password", "Password must be 8 digits")
+    .trim()
+    .notEmpty()
+    .matches("^[0-9]+$")
+    .isLength({ min: 8, max: 8 }),
   async (req: Request, res: Response, next: NextFunction) => {
-    const errors = validationResult(req);
-    console.log(errors);
-
-    if (!errors.isEmpty()) {
-      console.log({ errors: errors.array() });
+    const errors = validationResult(req).array({ onlyFirstError: true });
+    if (errors.length > 0) {
+      const error: any = new Error(errors[0].msg);
+      error.status = 400;
+      error.code = "Error_Invalid";
+      throw error;
     }
-    res.status(200).json({ message: "login" });
+
+    const { password } = req.body;
+    let phone = req.body.phone;
+    if (phone.slice(0, 2) === "09") {
+      phone = phone.substring(2, phone.length);
+    }
+
+    const user = await getUserByPhone(phone);
+    checkUserIfNotExist(user);
+
+    if (user!.status === "FREEZE") {
+      const error: any = new Error(
+        "Your account is temporarily locked.Please contact us.",
+      );
+      error.status = 401;
+      error.code = "Error_Freeze";
+      throw error;
+    }
+
+    const isMatchpassword = await bcrypt.compare(password, user!.password);
+
+    if (!isMatchpassword) {
+      const lastRequest = new Date(user!.updatedAt).toLocaleDateString();
+      const isSameDate = lastRequest === new Date().toLocaleDateString();
+
+      if (!isSameDate) {
+        const userDate = {
+          errorLoginCount: 1,
+        };
+
+        await updateUser(userDate, user!.id);
+      } else {
+        if (user!.errorLoginCount >= 2) {
+          const userDate = {
+            status: "FREEZE",
+          };
+
+          await updateUser(userDate, user!.id);
+        } else {
+          const userDate = {
+            errorLoginCount: { increment: 1 },
+          };
+
+          await updateUser(userDate, user!.id);
+        }
+      }
+
+      const error: any = new Error("Password is wrong.");
+      error.status = 401;
+      error.code = "Error_Invalid";
+      throw error;
+    }
+
+    const accessTokenPayload = { id: user!.id };
+    const accessToken = jwt.sign(
+      accessTokenPayload,
+      process.env.ACCESS_TOKEN_SECRET!,
+      {
+        expiresIn: 60 * 15,
+      },
+    );
+
+    const refreshTokenPayload = { id: user!.id, phone: user!.phone };
+    const refreshToken = jwt.sign(
+      refreshTokenPayload,
+      process.env.REFRESH_TOKEN_SECRET!,
+      {
+        expiresIn: "30d",
+      },
+    );
+
+    const userData = {
+      errorLoginCount: 0,
+      randToken: refreshToken,
+    };
+
+    await updateUser(userData, user!.id);
+
+    res
+      .cookie("accessToken", accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "none",
+        maxAge: 15 * 60 * 1000, // 15 minutes
+      })
+      .cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "none",
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      })
+      .status(201)
+      .json({
+        message: "Successfully login.",
+        userId: user!.id,
+      });
   },
 ];
 
@@ -310,18 +413,18 @@ export const confirmPassword = [
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "none",
-        maxAge: 15 * 60 * 1000 // 15 minutes
+        maxAge: 15 * 60 * 1000, // 15 minutes
       })
       .cookie("refreshToken", refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "none",
-        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       })
       .status(201)
       .json({
         message: "Successfully created an account.",
-        userId: newUser.id
+        userId: newUser.id,
       });
   },
 ];
@@ -336,11 +439,8 @@ export const forgetPassword = [
     .trim()
     .notEmpty()
     .matches("^[0-9]+$")
-    .isLength({ min: 8, max: 8 }), , async (
-      req: Request,
-      res: Response,
-      next: NextFunction,
-    ) => {
+    .isLength({ min: 8, max: 8 }),
+  async (req: Request, res: Response, next: NextFunction) => {
     const errors = validationResult(req).array({ onlyFirstError: true });
     if (errors.length > 0) {
       const error: any = new Error(errors[0].msg);
@@ -354,4 +454,54 @@ export const forgetPassword = [
     const user = await getUserByPhone(phone);
     checkUserExist(user);
     res.status(200).json({ message: "forget password" });
-  }];
+  },
+];
+
+export const logout = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const refreshToken = req.cookies ? req.cookies.refreshToken : null;
+
+  if (!refreshToken) {
+    const error: any = new Error("Your are not authenticated user.");
+    error.status = 401;
+    error.code = "Error_Unauthenticated";
+    throw error;
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET!) as {
+      id: number;
+      phone: string;
+    };
+  } catch (err) {
+    const error: any = new Error("Your are not authenticated user.");
+    error.status = 400;
+    error.code = "Error_Unauthenticated";
+    return next(error);
+  }
+
+  const user = await getUserById(decoded.id);
+  checkUserIfNotExist(user);
+
+  if (user?.phone !== decoded.phone) {
+    const error: any = new Error("Your are not authenticated user.");
+    error.status = 400;
+    error.code = "Error_Unauthenticated";
+    return next(error);
+  };
+
+  const userData = {
+    randToken: generateToken(),
+  };
+
+  await updateUser(userData, decoded.id);
+
+  res.clearCookie("accessToken");
+  res.clearCookie("refreshToken");
+
+  res.status(200).json({ message: "Successfully logged out. See you soon." });
+};
