@@ -1,4 +1,5 @@
 import cors, { CorsOptions } from "cors";
+import { errorCode } from "../../config/errorCode";
 
 const allowedOrigins: string[] = (process.env.ALLOWED_ORIGINS || "")
     .split(",")
@@ -16,7 +17,7 @@ const corsOptions: CorsOptions = {
 
         const error: any = new Error("Not allowed by CORS");
         error.status = 403;
-        error.code = "Error_CORS";
+        error.code = errorCode.cors;
         return callback(error);
     },
     credentials: true,
