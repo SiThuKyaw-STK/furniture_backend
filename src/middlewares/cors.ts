@@ -6,6 +6,8 @@ const allowedOrigins: string[] = (process.env.ALLOWED_ORIGINS || "")
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
 
+    console.log("ALLOWED_ORIGINS:", allowedOrigins);
+
 const corsOptions: CorsOptions = {
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
         // Allow requests with no origin (mobile apps, curl, Postman, same-origin)

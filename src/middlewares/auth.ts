@@ -5,7 +5,8 @@ import { getUserById, updateUser } from "../services/authService";
 import { createError } from "../utils/error";
 
 interface customRequest extends Request {
-  userId?: number
+  userId?: number,
+  user?: any,
 };
 
 export const auth = async (req: customRequest, res: Response, next: NextFunction) => {
@@ -118,6 +119,7 @@ export const auth = async (req: customRequest, res: Response, next: NextFunction
       });
 
     req.userId = user.id;
+    req.user = user;
     next();
   };
 

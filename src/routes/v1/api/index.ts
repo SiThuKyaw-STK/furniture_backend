@@ -1,0 +1,44 @@
+import express from "express";
+import {
+  //   changeLanguage,
+  //   testPermission,
+  uploadProfile,
+  getMyPhoto,
+  uploadProfileMultiple,
+  uploadProfileOptimize,
+} from "../../../controllers/api/profileController";
+import { auth } from "../../../middlewares/auth";
+import upload, { uploadMemory } from "../../../middlewares/uploadFile";
+import {
+  getPostsByPagination,
+  getInfinitePostsByPagination,
+  getPost,
+} from "../../../controllers/api/postController";
+import {
+  getProduct,
+  getProductsByPagination,
+  // getCategoryType,
+  // toggleFavourite,
+} from "../../../controllers/api/productController";
+import { getCategoriesAndTypes } from "../../../controllers/api/filterController";
+import { toggleFavourite } from "../../../controllers/api/userController";
+
+const router = express.Router();
+
+router.patch("/profile/upload", auth, upload.single("avatar"), uploadProfile);
+router.get("/profile/my-photo", getMyPhoto);
+router.patch("/profile/upload/optimize",auth,upload.single("avatar"),uploadProfileOptimize,);
+router.patch("/profile/upload/multiple",auth,upload.array("avatar"),uploadProfileMultiple,);
+
+router.get("/profile/my-photo", getMyPhoto); // Just for testing
+
+router.get("/posts", auth, getPostsByPagination); // Offset Pagination
+router.get("/posts/infinite", auth, getInfinitePostsByPagination); // Cursor-based Pagination
+router.get("/posts/:id", auth, getPost);
+
+router.get("/products/infinite", auth, getProductsByPagination); // Cursor-based Pagination
+router.get("/products/:id", auth, getProduct);
+
+router.get("/filter/categories-and-types", auth, getCategoriesAndTypes);
+router.patch("/products/toggle-favourite", auth, toggleFavourite);
+export default router;
